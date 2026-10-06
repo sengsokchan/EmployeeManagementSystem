@@ -2,7 +2,7 @@
 
 Web app I built to manage day-to-day HR work: employees, attendance, leave, payroll, and reports.
 
-**Demo:** https://hr-system-prod-999.web.app
+**Demo:** https://bopta.dev
 
 ## Stack
 
