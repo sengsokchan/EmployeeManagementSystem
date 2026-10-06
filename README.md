@@ -3,6 +3,15 @@
 Web app I built to manage day-to-day HR work: employees, attendance, leave, payroll, and reports.
 
 **Demo:** https://bopta.dev
+**Username**
+
+- admin@hr.local
+- manager@hr.local
+- employee@hr.local
+  **Password**
+- Admin@123 => River-Coffee-Moon-Train-84
+- Manager@123
+- Employee@123
 
 ## Stack
 
