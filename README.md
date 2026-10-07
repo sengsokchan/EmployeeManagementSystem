@@ -41,6 +41,17 @@ Frontend/Angular/    Web UI + Firebase config
 Frontend/Flutter/    Mobile client
 ```
 
+## Database
+
+Create an empty SQL Server database, then run the scripts against it. They do not create a login or store a password.
+
+```bash
+sqlcmd -S localhost -E -d YourDatabase -i Api/StoredProcedures/schema.sql
+sqlcmd -S localhost -E -d YourDatabase -i Api/StoredProcedures/seed.sql
+```
+
+`schema.sql` creates the tables and can be run again safely. `seed.sql` adds departments, roles, permissions, and the three demo users. In `appsettings.json`, set `Database=` to that database name and leave the SQL user and password empty when you use Windows authentication.
+
 ## Run locally
 
 **API**

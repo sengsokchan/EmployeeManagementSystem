@@ -53,7 +53,15 @@ DECLARE @EmployeeRoleId INT = (SELECT Id FROM Roles WHERE Name = N'Employee');
 DECLARE @ManagerRoleId INT = (SELECT Id FROM Roles WHERE Name = N'Manager');
 DECLARE @HrAdminRoleId INT = (SELECT Id FROM Roles WHERE Name = N'HR Admin');
 
--- Employee: self-service only (own records via employeeId filters)
+-- Employee: own attendance, leave, and payroll
+INSERT INTO RolePermissions (RoleId, PermissionId)
+SELECT @EmployeeRoleId, p.Id
+FROM Permissions p
+WHERE p.Code IN (N'attendance.read', N'leave.read', N'payroll.read')
+  AND NOT EXISTS (
+      SELECT 1 FROM RolePermissions rp
+      WHERE rp.RoleId = @EmployeeRoleId AND rp.PermissionId = p.Id);
+
 -- Manager
 INSERT INTO RolePermissions (RoleId, PermissionId)
 SELECT @ManagerRoleId, p.Id
