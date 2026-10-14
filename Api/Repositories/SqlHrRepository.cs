@@ -56,6 +56,8 @@ public sealed class SqlHrRepository : IHrRepository, ILeaveDecisionRepository
         _usesLegacyLeaveBalances = ColumnExists("dbo.LeaveBalances", "AnnualLeave") && !ColumnExists("dbo.LeaveBalances", "LeaveType");
         EnsureLoginSecurityTable();
         EnsureMustChangePasswordColumn();
+        EnsureSecurityColumns();
+        EnsurePasswordResetRequestsTable();
         EnsureLeaveBalancesTable();
         EnsureEmployeeBasicSalaryColumn();
         NormalizePayrollStatuses();
@@ -88,8 +90,8 @@ public sealed class SqlHrRepository : IHrRepository, ILeaveDecisionRepository
 
     public IReadOnlyList<UserAccount> Users => _users ??= Query(
         _usesUsernameColumn
-            ? "SELECT Id, EmployeeId, RoleId, Username AS Email, PasswordHash, IsActive, MustChangePassword FROM Users ORDER BY Id"
-            : "SELECT Id, EmployeeId, RoleId, Email, PasswordHash, IsActive, MustChangePassword FROM Users ORDER BY Id",
+            ? "SELECT Id, EmployeeId, RoleId, Username AS Email, PasswordHash, IsActive, MustChangePassword, SecurityStamp FROM Users ORDER BY Id"
+            : "SELECT Id, EmployeeId, RoleId, Email, PasswordHash, IsActive, MustChangePassword, SecurityStamp FROM Users ORDER BY Id",
         reader => new UserAccount(
             reader.GetInt32(0),
             NullableInt(reader, 1),
@@ -97,7 +99,8 @@ public sealed class SqlHrRepository : IHrRepository, ILeaveDecisionRepository
             reader.GetString(3),
             reader.GetString(4),
             reader.GetBoolean(5),
-            reader.GetBoolean(6)));
+            reader.GetBoolean(6),
+            reader.IsDBNull(7) ? string.Empty : reader.GetString(7)));
 
     public IReadOnlyList<Employee> Employees => _employees ??= Query(
         _usesLegacyEmployeeColumns
@@ -482,14 +485,14 @@ public sealed class SqlHrRepository : IHrRepository, ILeaveDecisionRepository
         var id = Scalar<int>(
             _usesUsernameColumn
                 ? """
-                  INSERT INTO Users (EmployeeId, RoleId, Username, PasswordHash, IsActive, MustChangePassword)
+                  INSERT INTO Users (EmployeeId, RoleId, Username, PasswordHash, IsActive, MustChangePassword, SecurityStamp)
                   OUTPUT INSERTED.Id
-                  VALUES (@EmployeeId, @RoleId, @Email, @PasswordHash, 1, @MustChangePassword)
+                  VALUES (@EmployeeId, @RoleId, @Email, @PasswordHash, 1, @MustChangePassword, CONVERT(NVARCHAR(64), NEWID()))
                   """
                 : """
-                  INSERT INTO Users (EmployeeId, RoleId, Email, PasswordHash, IsActive, MustChangePassword)
+                  INSERT INTO Users (EmployeeId, RoleId, Email, PasswordHash, IsActive, MustChangePassword, SecurityStamp)
                   OUTPUT INSERTED.Id
-                  VALUES (@EmployeeId, @RoleId, @Email, @PasswordHash, 1, @MustChangePassword)
+                  VALUES (@EmployeeId, @RoleId, @Email, @PasswordHash, 1, @MustChangePassword, CONVERT(NVARCHAR(64), NEWID()))
                   """,
             new SqlParameter("@EmployeeId", employeeId),
             new SqlParameter("@RoleId", roleId),
@@ -507,13 +510,108 @@ public sealed class SqlHrRepository : IHrRepository, ILeaveDecisionRepository
             """
             UPDATE Users
             SET PasswordHash = @PasswordHash,
-                MustChangePassword = @MustChangePassword
-            WHERE Id = @Id
+                MustChangePassword = @MustChangePassword,
+                SecurityStamp = CONVERT(NVARCHAR(64), NEWID()),
+                LastActivityAt = SYSUTCDATETIME()
+            WHERE Id = @Id;
+
+            UPDATE PasswordResetRequests
+            SET Status = N'Completed',
+                CompletedAt = SYSUTCDATETIME()
+            WHERE UserId = @Id AND Status = N'Pending';
             """,
             new SqlParameter("@PasswordHash", passwordHash),
             new SqlParameter("@MustChangePassword", mustChangePassword),
             new SqlParameter("@Id", userId));
         InvalidateCachedLists();
+    }
+
+    public void MarkSignedIn(int userId) => Execute(
+        "UPDATE Users SET LastActivityAt = SYSUTCDATETIME() WHERE Id = @Id",
+        new SqlParameter("@Id", userId));
+
+    public void RequestPasswordReset(int userId, int employeeId) => Execute(
+        """
+        IF EXISTS (SELECT 1 FROM PasswordResetRequests WHERE UserId = @UserId AND Status = N'Pending')
+        BEGIN
+            UPDATE PasswordResetRequests
+            SET RequestedAt = SYSUTCDATETIME(),
+                EmployeeId = @EmployeeId
+            WHERE UserId = @UserId AND Status = N'Pending';
+        END
+        ELSE
+        BEGIN
+            INSERT INTO PasswordResetRequests (UserId, EmployeeId, Status)
+            VALUES (@UserId, @EmployeeId, N'Pending');
+        END
+        """,
+        new SqlParameter("@UserId", userId),
+        new SqlParameter("@EmployeeId", employeeId));
+
+    public IReadOnlyList<PasswordResetRequestView> GetPendingPasswordResetRequests() => Query(
+        _usesLegacyEmployeeColumns
+            ? """
+              SELECT r.Id,
+                     r.EmployeeId,
+                     CONCAT('EMP', FORMAT(e.Id, '0000')) AS EmployeeCode,
+                     e.FullName,
+                     e.Email,
+                     r.RequestedAt
+              FROM PasswordResetRequests r
+              INNER JOIN Employees e ON e.Id = r.EmployeeId
+              WHERE r.Status = N'Pending'
+              ORDER BY r.RequestedAt
+              """
+            : """
+              SELECT r.Id, r.EmployeeId, e.EmployeeCode, e.FullName, e.Email, r.RequestedAt
+              FROM PasswordResetRequests r
+              INNER JOIN Employees e ON e.Id = r.EmployeeId
+              WHERE r.Status = N'Pending'
+              ORDER BY r.RequestedAt
+              """,
+        reader => new PasswordResetRequestView(
+            reader.GetInt32(0),
+            reader.GetInt32(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetString(4),
+            reader.GetDateTime(5)));
+
+    public SessionCheckResult AuthorizeSession(int userId, string securityStamp, int idleMinutes)
+    {
+        var code = Scalar<int>(
+            """
+            SET NOCOUNT ON;
+            DECLARE @Now DATETIME2 = SYSUTCDATETIME();
+            DECLARE @Stamp NVARCHAR(64);
+            DECLARE @Active BIT;
+            DECLARE @Last DATETIME2;
+
+            SELECT @Stamp = SecurityStamp, @Active = IsActive, @Last = LastActivityAt
+            FROM Users
+            WHERE Id = @UserId;
+
+            IF @Stamp IS NULL OR @Active IS NULL OR @Active = 0
+               OR @Stamp COLLATE Latin1_General_BIN2 <> @SecurityStamp COLLATE Latin1_General_BIN2
+                SELECT 0
+            ELSE IF @Last IS NOT NULL AND @Last < DATEADD(minute, -@IdleMinutes, @Now)
+                SELECT 2
+            ELSE
+            BEGIN
+                UPDATE Users SET LastActivityAt = @Now WHERE Id = @UserId;
+                SELECT 1
+            END
+            """,
+            new SqlParameter("@UserId", userId),
+            new SqlParameter("@SecurityStamp", securityStamp),
+            new SqlParameter("@IdleMinutes", idleMinutes));
+
+        return code switch
+        {
+            1 => SessionCheckResult.Allowed,
+            2 => SessionCheckResult.Idle,
+            _ => SessionCheckResult.Revoked
+        };
     }
 
     public AttendanceRecord CheckIn(int employeeId, AttendanceCheckRequest request)
@@ -876,6 +974,49 @@ public sealed class SqlHrRepository : IHrRepository, ILeaveDecisionRepository
                 LockoutEndAt DATETIME2 NULL,
                 RequiresAdminReset BIT NOT NULL DEFAULT 0,
                 UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+        END
+        """);
+
+    private void EnsureSecurityColumns()
+    {
+        // SQL Server compiles a batch before it runs, so the UPDATE cannot sit in the same
+        // batch as the ALTER that adds the column.
+        Execute(
+            """
+            IF COL_LENGTH('dbo.Users', 'SecurityStamp') IS NULL
+            BEGIN
+                ALTER TABLE dbo.Users ADD SecurityStamp NVARCHAR(64) NULL;
+            END
+            """);
+        Execute(
+            """
+            UPDATE dbo.Users
+            SET SecurityStamp = CONVERT(NVARCHAR(64), NEWID())
+            WHERE SecurityStamp IS NULL OR SecurityStamp = N'';
+            """);
+        Execute(
+            """
+            IF COL_LENGTH('dbo.Users', 'LastActivityAt') IS NULL
+            BEGIN
+                ALTER TABLE dbo.Users ADD LastActivityAt DATETIME2 NULL;
+            END
+            """);
+    }
+
+    private void EnsurePasswordResetRequestsTable() => Execute(
+        """
+        IF OBJECT_ID('dbo.PasswordResetRequests', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.PasswordResetRequests (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                UserId INT NOT NULL,
+                EmployeeId INT NOT NULL,
+                RequestedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                Status NVARCHAR(20) NOT NULL DEFAULT N'Pending',
+                CompletedAt DATETIME2 NULL,
+                CONSTRAINT FK_PasswordResetRequests_Users FOREIGN KEY (UserId) REFERENCES Users(Id),
+                CONSTRAINT FK_PasswordResetRequests_Employees FOREIGN KEY (EmployeeId) REFERENCES Employees(Id)
             );
         END
         """);

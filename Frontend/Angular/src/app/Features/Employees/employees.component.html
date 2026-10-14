@@ -30,6 +30,29 @@
     </button>
   </div>
 
+  @if (state.can('employees.write') && state.passwordResetRequests.length) {
+    <section class="callout reset-requests">
+      <h2>{{ 'employees.pendingResets' | t }}</h2>
+      <p>{{ 'employees.pendingResetsHint' | t }}</p>
+      <ul>
+        @for (request of state.passwordResetRequests; track request.id) {
+          <li>
+            <div>
+              <strong>{{ request.fullName }}</strong>
+              <span>{{ request.employeeCode }} · {{ request.email }}</span>
+            </div>
+            <button
+              type="button"
+              class="small-button"
+              (click)="state.resetEmployeePassword(request.employeeId, request.fullName)">
+              {{ 'employees.resetPassword' | t }}
+            </button>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+
   @if (!state.employees.length) {
     <app-empty-state
       [title]="state.employeeQuery.search || state.employeeQuery.status ? 'No matching employees' : 'No employees yet'"

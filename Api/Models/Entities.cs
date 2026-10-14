@@ -11,7 +11,8 @@ public sealed record UserAccount(
     string Email,
     string PasswordHash,
     bool IsActive,
-    bool MustChangePassword);
+    bool MustChangePassword,
+    string SecurityStamp);
 
 public sealed record Employee(
     int Id,

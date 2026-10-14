@@ -31,4 +31,13 @@ export class ApiService {
       })
     );
   }
+
+  /** Slides the server idle window. A 401 here must not sign the user out. */
+  touchSession(): Promise<void> {
+    return firstValueFrom(
+      this.http.get('/api/me', {
+        headers: new HttpHeaders({ 'X-Session-Touch': '1' })
+      })
+    ).then(() => undefined);
+  }
 }

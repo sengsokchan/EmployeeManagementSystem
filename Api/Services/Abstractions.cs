@@ -36,6 +36,10 @@ public interface IHrRepository
     Employee? DeactivateEmployee(int id);
     UserAccount CreateUserAccount(int employeeId, int roleId, string email, string passwordHash, bool mustChangePassword);
     void UpdateUserPassword(int userId, string passwordHash, bool mustChangePassword);
+    void MarkSignedIn(int userId);
+    void RequestPasswordReset(int userId, int employeeId);
+    IReadOnlyList<PasswordResetRequestView> GetPendingPasswordResetRequests();
+    SessionCheckResult AuthorizeSession(int userId, string securityStamp, int idleMinutes);
     AttendanceRecord CheckIn(int employeeId, AttendanceCheckRequest request);
     AttendanceRecord? CheckOut(int employeeId);
     LeaveRequest CreateLeaveRequest(int employeeId, LeaveCreateRequest request);
@@ -51,8 +55,8 @@ public interface IAuthService
 {
     LoginResult Login(LoginRequest request);
     CurrentUserView? GetCurrentUser(UserContext user);
-    void ChangePassword(UserContext user, ChangePasswordRequest request);
-    PasswordResetResult ForgotPassword(ForgotPasswordRequest request);
+    string ChangePassword(UserContext user, ChangePasswordRequest request);
+    PasswordResetAcknowledgement ForgotPassword(ForgotPasswordRequest request);
 }
 
 public interface IDashboardService
@@ -75,6 +79,7 @@ public interface IEmployeeService
     EmployeeView? UpdateEmployee(int id, EmployeeWriteRequest request, UserContext user);
     bool DeactivateEmployee(int id, UserContext user);
     PasswordResetResult ResetPassword(int employeeId, UserContext user);
+    IReadOnlyList<PasswordResetRequestView> GetPendingPasswordResetRequests(UserContext user);
 }
 
 public interface IAttendanceService

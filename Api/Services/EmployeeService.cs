@@ -111,4 +111,10 @@ public sealed class EmployeeService(IHrRepository repository, IPasswordHasher pa
 
         return new PasswordResetResult(employee.FullName, account.Email, temporaryPassword);
     }
+
+    public IReadOnlyList<PasswordResetRequestView> GetPendingPasswordResetRequests(UserContext user)
+    {
+        if (!AuthorizationRules.Can(user, "employees.write")) throw new UnauthorizedAccessException();
+        return repository.GetPendingPasswordResetRequests();
+    }
 }

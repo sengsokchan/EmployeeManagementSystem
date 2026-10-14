@@ -32,8 +32,8 @@ public sealed class AuthController(IAuthService service) : ControllerBase
 
         try
         {
-            service.ChangePassword(user, request);
-            return Ok(new { message = "Password updated. You can continue using the app." });
+            var token = service.ChangePassword(user, request);
+            return Ok(new { message = "Password updated. You can continue using the app.", token });
         }
         catch (Exception exception)
         {

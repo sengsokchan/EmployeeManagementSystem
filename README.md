@@ -2,17 +2,7 @@
 
 Web app I built to manage day-to-day HR work: employees, attendance, leave, payroll, and reports.
 
-**Demo:** https://bopta.dev
-
-**Username**
-- admin@hr.local
-- manager@hr.local
-- employee@hr.local
-
-**Password**
-- Admin@123 => River-Coffee-Moon-Train-84
-- Manager@123
-- Employee@123
+**Demo:** https://hr-system-prod-999.web.app
 
 ## Stack
 
@@ -41,28 +31,17 @@ Frontend/Angular/    Web UI + Firebase config
 Frontend/Flutter/    Mobile client
 ```
 
-## Database
-
-Create an empty SQL Server database, then run the scripts against it. They do not create a login or store a password.
-
-```bash
-sqlcmd -S localhost -E -d YourDatabase -i Api/StoredProcedures/schema.sql
-sqlcmd -S localhost -E -d YourDatabase -i Api/StoredProcedures/seed.sql
-```
-
-`schema.sql` creates the tables and can be run again safely. `seed.sql` adds departments, roles, permissions, and the three demo users. In `appsettings.json`, set `Database=` to that database name and leave the SQL user and password empty when you use Windows authentication.
-
 ## Run locally
 
 **API**
 
 ```bash
 cd Api
-# set ConnectionStrings and Auth:SigningKey in appsettings.json
+dotnet user-secrets set "Auth:SigningKey" "<a new random secret, at least 32 characters>"
 dotnet run
 ```
 
-Runs on `http://localhost:5088`.
+Runs on `http://localhost:5088`. The signing key is not stored in `appsettings.json`. Local runs read it from .NET user secrets. Do not reuse `HrManagementSystem-Dev-Signing-Key-ChangeMe!`.
 
 **Angular**
 
@@ -79,5 +58,6 @@ Runs on `http://localhost:4200` (`/api` proxied to the local API).
 - UI: Firebase Hosting (`npm run deploy:web` in `Frontend/Angular`)
 - API: Docker image on Cloud Run (`Api/Dockerfile`)
 - Firebase rewrites `/api/**` to the Cloud Run service
+- Set Cloud Run environment variable `Auth__SigningKey` to a new secret of at least 32 characters. The API will not start without it, and it must not be the old key that used to be in `appsettings.json`.
 
 Keep real keys and DB passwords out of git. Use placeholders in `appsettings.json` and secrets in the cloud.

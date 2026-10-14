@@ -45,6 +45,7 @@ public sealed class AuthService(IHrRepository repository, IPasswordHasher passwo
         var permissions = repository.GetPermissions(role.Name);
         var employee = user.EmployeeId is null ? null : repository.Employees.FirstOrDefault(e => e.Id == user.EmployeeId);
         var token = tokens.CreateToken(user, role.Name, permissions);
+        repository.MarkSignedIn(user.Id);
         repository.ClearLoginSecurity(email);
 
         var signedIn = new SignedInUser(
@@ -79,7 +80,7 @@ public sealed class AuthService(IHrRepository repository, IPasswordHasher passwo
             account?.MustChangePassword ?? false);
     }
 
-    public void ChangePassword(UserContext user, ChangePasswordRequest request)
+    public string ChangePassword(UserContext user, ChangePasswordRequest request)
     {
         var account = repository.Users.FirstOrDefault(u => u.Id == user.UserId && u.IsActive)
             ?? throw new UnauthorizedAccessException();
@@ -101,10 +102,18 @@ public sealed class AuthService(IHrRepository repository, IPasswordHasher passwo
 
         repository.UpdateUserPassword(account.Id, passwords.Hash(request.NewPassword.Trim()), mustChangePassword: false);
         repository.AddAudit(user.UserId, "Changed password", "User", account.Id.ToString(), "Password updated");
+
+        var updated = repository.Users.First(u => u.Id == account.Id);
+        var role = repository.Roles.Single(r => r.Id == updated.RoleId);
+        var permissions = repository.GetPermissions(role.Name);
+        return tokens.CreateToken(updated, role.Name, permissions);
     }
 
-    public PasswordResetResult ForgotPassword(ForgotPasswordRequest request)
+    public PasswordResetAcknowledgement ForgotPassword(ForgotPasswordRequest request)
     {
+        const string message =
+            "If those details match an active account, HR has been asked to reset your password. Contact your HR admin to receive a temporary passphrase.";
+
         var email = (request.Email ?? string.Empty).Trim();
         var employeeCode = (request.EmployeeCode ?? string.Empty).Trim();
 
@@ -125,17 +134,17 @@ public sealed class AuthService(IHrRepository repository, IPasswordHasher passwo
             employee.EmployeeCode.Equals(employeeCode, StringComparison.OrdinalIgnoreCase) &&
             employee.Email.Equals(email, StringComparison.OrdinalIgnoreCase);
 
-        if (!matched)
+        if (matched)
         {
-            repository.RecordFailedLogin(email, user?.Id);
-            throw new InvalidOperationException("Email and employee code do not match an active account.");
+            repository.RequestPasswordReset(user!.Id, employee!.Id);
+            repository.AddAudit(
+                user.Id,
+                "Requested password reset",
+                "User",
+                user.Id.ToString(),
+                "Self-service reset requested. No password was issued.");
         }
 
-        var temporaryPassword = PassphraseGenerator.Generate();
-        repository.UpdateUserPassword(user!.Id, passwords.Hash(temporaryPassword), mustChangePassword: true);
-        repository.ClearLoginSecurity(email);
-        repository.AddAudit(user.Id, "Forgot password reset", "User", user.Id.ToString(), "Self-service temporary password issued");
-
-        return new PasswordResetResult(employee!.FullName, user.Email, temporaryPassword);
+        return new PasswordResetAcknowledgement(message);
     }
 }

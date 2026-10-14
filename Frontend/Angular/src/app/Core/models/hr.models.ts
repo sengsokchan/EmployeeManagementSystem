@@ -61,6 +61,15 @@ export interface PasswordResetResult {
   temporaryPassword: string;
 }
 
+export interface PasswordResetRequestView {
+  id: number;
+  employeeId: number;
+  employeeCode: string;
+  fullName: string;
+  email: string;
+  requestedAt: string;
+}
+
 export interface IssuedCredentials {
   fullName: string;
   loginEmail: string;

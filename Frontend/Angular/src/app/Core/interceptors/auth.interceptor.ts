@@ -9,6 +9,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const router = inject(Router);
   const isPublicAuth =
     req.url.includes('/api/auth/login') || req.url.includes('/api/auth/forgot-password');
+  const isSessionTouch = req.headers.has('X-Session-Touch');
 
   let headers = req.headers;
   if (state.token && req.url.startsWith('/api') && !isPublicAuth) {
@@ -17,7 +18,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
 
   return next(req.clone({ headers })).pipe(
     catchError((error: HttpErrorResponse) => {
-      if (error.status === 401 && !isPublicAuth && state.isAuthenticated) {
+      if (error.status === 401 && !isPublicAuth && !isSessionTouch && state.isAuthenticated) {
         state.handleUnauthorized();
         void router.navigateByUrl('/login');
       }

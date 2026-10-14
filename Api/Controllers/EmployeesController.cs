@@ -95,6 +95,23 @@ public sealed class EmployeesController(IEmployeeService service) : ControllerBa
         }
     }
 
+    [HttpGet("password-reset-requests")]
+    public IActionResult GetPasswordResetRequests()
+    {
+        var user = ControllerResult.RequireUser(this);
+        if (user is null) return ControllerResult.UnauthorizedResult(this);
+        if (!AuthorizationRules.Can(user, "employees.write")) return ControllerResult.Forbidden(this);
+
+        try
+        {
+            return Ok(service.GetPendingPasswordResetRequests(user));
+        }
+        catch (Exception exception)
+        {
+            return ControllerResult.Error(this, exception);
+        }
+    }
+
     [HttpPost("{id:int}/reset-password")]
     public IActionResult ResetPassword(int id)
     {

@@ -5,9 +5,11 @@ namespace HrManagementSystem.Application;
 public sealed record LoginRequest(string Email, string Password);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record ForgotPasswordRequest(string Email, string EmployeeCode);
+public sealed record PasswordResetAcknowledgement(string Message);
 public sealed record PasswordResetResult(string FullName, string LoginEmail, string TemporaryPassword);
-public sealed record UserContext(int UserId, int? EmployeeId, string Email, string Role, string[] Permissions);
-public sealed record TokenPayload(int UserId, int? EmployeeId, string Email, string Role, string[] Permissions, long ExpiresAt, string Issuer, string Audience);
+public sealed record PasswordResetRequestView(int Id, int EmployeeId, string EmployeeCode, string FullName, string Email, DateTime RequestedAt);
+public sealed record UserContext(int UserId, int? EmployeeId, string Email, string Role, string[] Permissions, string SecurityStamp);
+public sealed record TokenPayload(int UserId, int? EmployeeId, string Email, string Role, string[] Permissions, long ExpiresAt, string Issuer, string Audience, long IssuedAt, string SecurityStamp);
 
 public sealed record LoginResponse(string Token, SignedInUser User, bool MustChangePassword);
 public sealed record LoginResult(LoginResultStatus Status, LoginResponse? Response, string Message, DateTime? RetryAt);
@@ -151,6 +153,13 @@ public enum LoginResultStatus
     InvalidCredentials,
     TemporarilyLocked,
     AdminLocked
+}
+
+public enum SessionCheckResult
+{
+    Allowed,
+    Revoked,
+    Idle
 }
 
 public static class Paging

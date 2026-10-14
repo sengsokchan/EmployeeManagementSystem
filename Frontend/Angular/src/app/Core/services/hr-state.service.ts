@@ -19,6 +19,7 @@ import {
   ListQuery,
   LoginResponse,
   PagedResult,
+  PasswordResetRequestView,
   PasswordResetResult,
   PayrollView,
   Position,
@@ -29,13 +30,14 @@ import {
   ViewName
 } from '../models/hr.models';
 import { ApiService } from './api.service';
+import { clearStoredSession, loadSession, markActivity, saveSession, sessionStaleReason } from './browser-session';
 
 @Injectable({ providedIn: 'root' })
 export class HrStateService {
   renderVersion = signal(0);
 
-  token = localStorage.getItem('hr_token');
-  user: SignedInUser | null = JSON.parse(localStorage.getItem('hr_user') || 'null') as SignedInUser | null;
+  token: string | null = null;
+  user: SignedInUser | null = null;
 
   loginEmail = '';
   loginPassword = '';
@@ -46,8 +48,8 @@ export class HrStateService {
   forgotEmployeeCode = '';
   forgotError = '';
   forgotInProgress = false;
-  forgotResult: PasswordResetResult | null = null;
-  forgotCopied = false;
+  forgotRequested = false;
+  passwordResetRequests: PasswordResetRequestView[] = [];
 
   changeCurrentPassword = '';
   changeNewPassword = '';
@@ -125,7 +127,12 @@ export class HrStateService {
     private readonly api: ApiService,
     private readonly router: Router,
     private readonly i18n: I18nService
-  ) {}
+  ) {
+    const stored = loadSession();
+    this.token = stored.token;
+    this.user = stored.user;
+    this.watchSession();
+  }
 
   get isAuthenticated(): boolean {
     return Boolean(this.token && this.user);
@@ -220,13 +227,12 @@ export class HrStateService {
         this.wait(500)
       ]);
 
-      this.token = response.token;
       this.user = {
         ...response.user,
         mustChangePassword: response.mustChangePassword ?? response.user.mustChangePassword ?? false
       };
-      localStorage.setItem('hr_token', response.token);
-      localStorage.setItem('hr_user', JSON.stringify(this.user));
+      saveSession(response.token, this.user);
+      this.token = response.token;
       this.loginPassword = '';
       this.loginInProgress = false;
       this.render();
@@ -251,17 +257,17 @@ export class HrStateService {
     if (this.forgotInProgress) return;
 
     this.forgotError = '';
-    this.forgotResult = null;
-    this.forgotCopied = false;
+    this.forgotRequested = false;
     this.forgotInProgress = true;
     this.render();
 
     try {
-      this.forgotResult = await this.api.request<PasswordResetResult>('/api/auth/forgot-password', 'POST', {
+      await this.api.request<{ message: string }>('/api/auth/forgot-password', 'POST', {
         email: this.forgotEmail.trim(),
         employeeCode: this.forgotEmployeeCode.trim()
       });
-      this.notify('Temporary password created. Sign in and set a new passphrase.', 'success');
+      this.forgotRequested = true;
+      this.notify(this.i18n.t('auth.forgotSent'), 'success');
     } catch (error) {
       this.forgotError = this.errorMessage(error);
     } finally {
@@ -270,22 +276,9 @@ export class HrStateService {
     }
   }
 
-  async copyForgotPassword(): Promise<void> {
-    if (!this.forgotResult) return;
-    try {
-      await navigator.clipboard.writeText(this.forgotResult.temporaryPassword);
-      this.forgotCopied = true;
-      this.notify('Temporary password copied.', 'info');
-    } catch {
-      this.notify('Could not copy automatically. Select and copy the password manually.', 'warning');
-    }
-    this.render();
-  }
-
   clearForgotPasswordForm(): void {
     this.forgotError = '';
-    this.forgotResult = null;
-    this.forgotCopied = false;
+    this.forgotRequested = false;
     this.forgotEmployeeCode = '';
     this.render();
   }
@@ -320,14 +313,17 @@ export class HrStateService {
     this.render();
 
     try {
-      await this.request<{ message: string }>('/api/auth/change-password', 'POST', {
+      const updated = await this.request<{ message: string; token?: string }>('/api/auth/change-password', 'POST', {
         currentPassword: current,
         newPassword: next
       });
 
       if (this.user) {
         this.user = { ...this.user, mustChangePassword: false };
-        localStorage.setItem('hr_user', JSON.stringify(this.user));
+        if (updated.token) {
+          saveSession(updated.token, this.user);
+          this.token = updated.token;
+        }
       }
 
       this.changeCurrentPassword = '';
@@ -363,15 +359,47 @@ export class HrStateService {
     void this.router.navigateByUrl('/login');
   }
 
-  handleUnauthorized(): void {
+  handleUnauthorized(reason: 'idle' | 'expired' = 'expired'): void {
+    if (!this.isAuthenticated) return;
     this.clearSession();
-    this.loginError = 'Your session expired. Please sign in again.';
-    this.notify('Your session expired. Please sign in again.', 'warning');
+    const message = reason === 'idle'
+      ? this.i18n.t('auth.sessionIdle')
+      : this.i18n.t('auth.sessionExpired');
+    this.loginError = message;
+    this.notify(message, 'warning');
+    void this.router.navigateByUrl('/login');
+  }
+
+  private lastServerTouch = 0;
+
+  private watchSession(): void {
+    if (typeof window === 'undefined') return;
+    const mark = () => {
+      markActivity();
+      void this.touchServerSession();
+    };
+    window.addEventListener('pointerdown', mark, { passive: true });
+    window.addEventListener('keydown', mark);
+    window.setInterval(() => {
+      const reason = sessionStaleReason();
+      if (reason) this.handleUnauthorized(reason);
+    }, 15_000);
+  }
+
+  private async touchServerSession(): Promise<void> {
+    if (!this.isAuthenticated) return;
+    const now = Date.now();
+    if (now - this.lastServerTouch < 60_000) return;
+    this.lastServerTouch = now;
+    try {
+      await this.api.touchSession();
+    } catch {
+      // A 401 is handled by the auth interceptor.
+    }
   }
 
   private clearSession(): void {
-    localStorage.removeItem('hr_token');
-    localStorage.removeItem('hr_user');
+    clearStoredSession();
     this.token = null;
     this.user = null;
     this.currentView = 'dashboard';
@@ -707,6 +735,7 @@ export class HrStateService {
       };
       this.credentialsCopied = false;
       this.notify('Password reset. Share the temporary password securely.', 'success');
+      await this.loadPasswordResetRequests();
       this.render();
     } catch (error) {
       this.notify(this.errorMessage(error), 'error');
@@ -1059,20 +1088,38 @@ export class HrStateService {
   }
 
   private async loadEmployees(): Promise<void> {
-    const result = await this.request<PagedResult<EmployeeView> | EmployeeView[]>(
-      '/api/employees',
-      'GET',
-      undefined,
-      {
-        page: this.employeeQuery.page,
-        pageSize: this.employeeQuery.pageSize,
-        search: this.employeeQuery.search,
-        status: this.employeeQuery.status
-      }
-    );
+    const [result] = await Promise.all([
+      this.request<PagedResult<EmployeeView> | EmployeeView[]>(
+        '/api/employees',
+        'GET',
+        undefined,
+        {
+          page: this.employeeQuery.page,
+          pageSize: this.employeeQuery.pageSize,
+          search: this.employeeQuery.search,
+          status: this.employeeQuery.status
+        }
+      ),
+      this.loadPasswordResetRequests()
+    ]);
     const paged = this.unwrapPaged(result);
     this.employees = paged.items;
     this.employeeTotal = paged.total;
+  }
+
+  private async loadPasswordResetRequests(): Promise<void> {
+    if (!this.can('employees.write')) {
+      this.passwordResetRequests = [];
+      return;
+    }
+
+    try {
+      this.passwordResetRequests = await this.request<PasswordResetRequestView[]>(
+        '/api/employees/password-reset-requests'
+      );
+    } catch {
+      this.passwordResetRequests = [];
+    }
   }
 
   private async loadAttendance(summary = false): Promise<void> {

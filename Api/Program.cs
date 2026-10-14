@@ -9,6 +9,7 @@ using HrManagementSystem.Infrastructure.Security;
 AppContext.SetSwitch("Switch.Microsoft.Data.SqlClient.SuppressInsecureTLSWarning", true);
 
 var builder = WebApplication.CreateBuilder(args);
+TokenService.RequireSigningKey(builder.Configuration);
 
 builder.WebHost.UseUrls("http://0.0.0.0:5088");
 

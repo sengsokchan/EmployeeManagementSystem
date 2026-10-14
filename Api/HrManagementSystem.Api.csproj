@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>HrManagementSystem</RootNamespace>
     <AssemblyName>HrManagementSystem.Api</AssemblyName>
+    <UserSecretsId>a7c4e1b2-6d58-4f0a-9c31-5e8b7d2a4f16</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
